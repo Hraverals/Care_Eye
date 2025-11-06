@@ -87,6 +87,10 @@ EXCLUSION_ZONES = []
 SAFE_ZONES_CONFIG = 'safe_zones.json'
 
 def load_safe_zones():
+    """
+    safe_zones.json 에서 안전구역 좌표를 로드함
+    다각형: [[x, y], ...] (정규화 좌표, 3개 포인트 이상)
+    """
     global EXCLUSION_ZONES
     try:
         if os.path.isfile(SAFE_ZONES_CONFIG):
@@ -95,19 +99,7 @@ def load_safe_zones():
                 if isinstance(zones, list):
                     valid = []
                     for z in zones:
-                        # Rectangle
                         if (
-                            isinstance(z, (list, tuple)) and len(z) == 4 and
-                            all(isinstance(v, (int, float)) for v in z)
-                        ):
-                            x1, y1, x2, y2 = z
-                            x1, y1 = float(max(0.0, min(1.0, x1))), float(max(0.0, min(1.0, y1)))
-                            x2, y2 = float(max(0.0, min(1.0, x2))), float(max(0.0, min(1.0, y2)))
-                            x_min, x_max = (x1, x2) if x1 <= x2 else (x2, x1)
-                            y_min, y_max = (y1, y2) if y1 <= y2 else (y2, y1)
-                            valid.append([x_min, y_min, x_max, y_max])
-                        # Polygon
-                        elif (
                             isinstance(z, (list, tuple)) and len(z) >= 3 and
                             all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z)
                         ):
@@ -127,6 +119,9 @@ def load_safe_zones():
         pass
 
 def point_in_polygon(pt, poly):
+    """
+    레이캐스팅 알고리즘으로 점(pt)이 다각형(poly) 내부인지 검사
+    """
     x, y = pt
     inside = False
     n = len(poly)
@@ -141,29 +136,22 @@ def point_in_polygon(pt, poly):
     return inside
 
 def point_in_zones(nx, ny, zones):
+    """
+    정규화 좌표(nx, ny)가 다각형 안전구역들 중 하나에 포함되는지 여부를 반환
+    """
     for z in zones:
-        if isinstance(z, (list, tuple)) and len(z) == 4 and all(isinstance(v, (int, float)) for v in z):
-            x1, y1, x2, y2 = z
-            if x1 <= nx <= x2 and y1 <= ny <= y2:
-                return True
-        elif isinstance(z, (list, tuple)) and len(z) >= 3 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z):
+        if isinstance(z, (list, tuple)) and len(z) >= 3 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z):
             if point_in_polygon((nx, ny), z):
                 return True
     return False
 
 def draw_zones(image, zones, color=(0, 255, 0)):
+    """
+    현재 프레임 위에 안전구역 draw - 초록색 반투명 다각형
+    """
     h, w = image.shape[:2]
     for z in zones:
-        if isinstance(z, (list, tuple)) and len(z) == 4 and all(isinstance(v, (int, float)) for v in z):
-            x1, y1, x2, y2 = z
-            p1 = (int(x1 * w), int(y1 * h))
-            p2 = (int(x2 * w), int(y2 * h))
-            overlay = image.copy()
-            cv2.rectangle(overlay, p1, p2, color, -1)
-            image[:] = cv2.addWeighted(overlay, 0.15, image, 0.85, 0)
-            cv2.rectangle(image, p1, p2, color, 2)
-            cv2.putText(image, 'SAFE ZONE', (p1[0] + 6, p1[1] + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
-        elif isinstance(z, (list, tuple)) and len(z) >= 3 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z):
+        if isinstance(z, (list, tuple)) and len(z) >= 3 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z):
             pts = np.array([[int(px * w), int(py * h)] for (px, py) in z], dtype=np.int32)
             overlay = image.copy()
             cv2.fillPoly(overlay, [pts], color)
@@ -173,6 +161,10 @@ def draw_zones(image, zones, color=(0, 255, 0)):
             cv2.putText(image, 'SAFE ZONE', (p1[0] + 6, p1[1] + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
 def get_person_center_normalized(results):
+    """
+    Mediapipe 포즈 랜드마크의 가시 점들로 바운딩박스를 만들고,
+    그 중심을 정규화 좌표계(0~1)로 반환함. 추적 실패 시 None.
+    """
     try:
         if not results or not results.pose_landmarks:
             return None
@@ -191,6 +183,11 @@ def get_person_center_normalized(results):
         return None
 
 class FrameBuffer:
+    """
+    블랙박스 기능 용 롤링 프레임 버퍼.
+    - 최근 keep_seconds 동안의 프레임을 JPEG로 샘플링하여 보관함
+    - slice_window(start_t, end_t)로 원하는 시간 구간을 꺼내기 가능
+    """
     def __init__(self, keep_seconds=80.0, target_fps=10, jpeg_quality=80):
         self.keep_seconds = float(keep_seconds)
         self.target_fps = float(target_fps)
@@ -230,6 +227,9 @@ class FrameBuffer:
         return frames
 
 def save_incident_clip(frames_enc_list, out_path, frame_size, fps=10):
+    """
+    인코딩된 프레임 목록(frames_enc_list)을 사용해 MP4 영상으로 저장
+    """
     try:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -246,11 +246,11 @@ def save_incident_clip(frames_enc_list, out_path, frame_size, fps=10):
     except Exception:
         return False
 
-PRE_SECONDS = 30.0
-POST_SECONDS = 30.0
-BUFFER_FPS = 10
-JPEG_QUALITY = 80
-REPORT_DIR = 'reports'
+PRE_SECONDS = 30.0      # 낙상 시작 시점 기준 이전 30초
+POST_SECONDS = 30.0     # 낙상 시작 시점 기준 이후 30초
+BUFFER_FPS = 10         # 버퍼에 저장할 샘플링 FPS (용량/성능 절충)
+JPEG_QUALITY = 80       # 버퍼 JPEG 품질 (용량/화질 절충)
+REPORT_DIR = 'reports'  # 사고 영상 저장 폴더
 
 load_safe_zones()
 cap = cv2.VideoCapture('fall_final.mp4')
@@ -278,14 +278,16 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
     paused_elapsed_end = 0.0
 
     # rolling buffer for blackbox (-30s/+30s)
+    # 블랙박스 버퍼 초기화 (여유 20초 포함)
     frame_buffer = FrameBuffer(keep_seconds=PRE_SECONDS + POST_SECONDS + 20, target_fps=10, jpeg_quality=80)
 
     # incident state
-    incident_pending = False
-    incident_event_time = None
-    incident_saving = False
-    last_saved_time = None
-    incident_done = False
+    # 사고 영상 저장 상태 변수들
+    incident_pending = False     # 저장 대기(ARMED) 상태 여부
+    incident_event_time = None   # 낙상 시작(타이머 0초) 시각
+    incident_saving = False      # 저장 중 여부
+    last_saved_time = None       # 마지막 저장 완료 시각
+    incident_done = False        # 해당 낙상 이벤트에 대해 한 번 저장 완료했는지 여부
 
     while cap.isOpened():
         ret, frame = cap.read()
