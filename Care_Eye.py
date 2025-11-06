@@ -453,8 +453,8 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
 
         cv2.imshow('Fall Detection', image)
 
-        # 종료 키
-        if cv2.waitKey(10) & 0xFF == ord('q'):
+        # 종료 키 - waitKey 매개변수 값 줄이면 cpu usage 는 늘어나지만 영상처리는 빨라짐
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
 cap.release()
