@@ -31,3 +31,5 @@ mlruns/
 .cache/
 dist/
 build/
+
+reports
