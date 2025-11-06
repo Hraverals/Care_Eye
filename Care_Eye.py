@@ -5,6 +5,10 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import time
+import os
+import json
+from collections import deque
+from datetime import datetime
 
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
@@ -73,6 +77,180 @@ def is_fall_condition_met(keypoints):
         return False
 
 
+# ============================
+# Safe zone (load-only) + blackbox helpers
+# ============================
+
+EXCLUSION_ZONES = []  # rectangles [x1,y1,x2,y2] or polygons [[x,y], ...] in normalized coords on flipped image
+SAFE_ZONES_CONFIG = 'safe_zones.json'
+
+def load_safe_zones():
+    global EXCLUSION_ZONES
+    try:
+        if os.path.isfile(SAFE_ZONES_CONFIG):
+            with open(SAFE_ZONES_CONFIG, 'r', encoding='utf-8') as f:
+                zones = json.load(f)
+                if isinstance(zones, list):
+                    valid = []
+                    for z in zones:
+                        # Rectangle
+                        if (
+                            isinstance(z, (list, tuple)) and len(z) == 4 and
+                            all(isinstance(v, (int, float)) for v in z)
+                        ):
+                            x1, y1, x2, y2 = z
+                            x1, y1 = float(max(0.0, min(1.0, x1))), float(max(0.0, min(1.0, y1)))
+                            x2, y2 = float(max(0.0, min(1.0, x2))), float(max(0.0, min(1.0, y2)))
+                            x_min, x_max = (x1, x2) if x1 <= x2 else (x2, x1)
+                            y_min, y_max = (y1, y2) if y1 <= y2 else (y2, y1)
+                            valid.append([x_min, y_min, x_max, y_max])
+                        # Polygon
+                        elif (
+                            isinstance(z, (list, tuple)) and len(z) >= 3 and
+                            all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z)
+                        ):
+                            norm_poly = []
+                            for pt in z:
+                                px, py = pt
+                                if not (isinstance(px, (int, float)) and isinstance(py, (int, float))):
+                                    norm_poly = []
+                                    break
+                                nx = float(max(0.0, min(1.0, px)))
+                                ny = float(max(0.0, min(1.0, py)))
+                                norm_poly.append([nx, ny])
+                            if len(norm_poly) >= 3:
+                                valid.append(norm_poly)
+                    EXCLUSION_ZONES = valid
+    except Exception:
+        pass
+
+def point_in_polygon(pt, poly):
+    x, y = pt
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        intersects = ((y1 > y) != (y2 > y)) and (
+            x < (x2 - x1) * (y - y1) / ((y2 - y1) if (y2 - y1) != 0 else 1e-9) + x1
+        )
+        if intersects:
+            inside = not inside
+    return inside
+
+def point_in_zones(nx, ny, zones):
+    for z in zones:
+        if isinstance(z, (list, tuple)) and len(z) == 4 and all(isinstance(v, (int, float)) for v in z):
+            x1, y1, x2, y2 = z
+            if x1 <= nx <= x2 and y1 <= ny <= y2:
+                return True
+        elif isinstance(z, (list, tuple)) and len(z) >= 3 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z):
+            if point_in_polygon((nx, ny), z):
+                return True
+    return False
+
+def draw_zones(image, zones, color=(0, 255, 0)):
+    h, w = image.shape[:2]
+    for z in zones:
+        if isinstance(z, (list, tuple)) and len(z) == 4 and all(isinstance(v, (int, float)) for v in z):
+            x1, y1, x2, y2 = z
+            p1 = (int(x1 * w), int(y1 * h))
+            p2 = (int(x2 * w), int(y2 * h))
+            overlay = image.copy()
+            cv2.rectangle(overlay, p1, p2, color, -1)
+            image[:] = cv2.addWeighted(overlay, 0.15, image, 0.85, 0)
+            cv2.rectangle(image, p1, p2, color, 2)
+            cv2.putText(image, 'SAFE ZONE', (p1[0] + 6, p1[1] + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+        elif isinstance(z, (list, tuple)) and len(z) >= 3 and all(isinstance(p, (list, tuple)) and len(p) == 2 for p in z):
+            pts = np.array([[int(px * w), int(py * h)] for (px, py) in z], dtype=np.int32)
+            overlay = image.copy()
+            cv2.fillPoly(overlay, [pts], color)
+            image[:] = cv2.addWeighted(overlay, 0.15, image, 0.85, 0)
+            cv2.polylines(image, [pts], isClosed=True, color=color, thickness=2)
+            p1 = (pts[0][0], pts[0][1])
+            cv2.putText(image, 'SAFE ZONE', (p1[0] + 6, p1[1] + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
+
+def get_person_center_normalized(results):
+    try:
+        if not results or not results.pose_landmarks:
+            return None
+        ls = results.pose_landmarks.landmark
+        xs, ys = [], []
+        for lm in ls:
+            if hasattr(lm, 'visibility') and lm.visibility is not None and lm.visibility >= 0.5:
+                xs.append(lm.x)
+                ys.append(lm.y)
+        if not xs or not ys:
+            return None
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        return ((x_min + x_max) / 2.0, (y_min + y_max) / 2.0)
+    except Exception:
+        return None
+
+class FrameBuffer:
+    def __init__(self, keep_seconds=80.0, target_fps=10, jpeg_quality=80):
+        self.keep_seconds = float(keep_seconds)
+        self.target_fps = float(target_fps)
+        self.jpeg_quality = int(jpeg_quality)
+        self.buf = deque()
+        self._last_push_time = 0.0
+
+    def _should_sample(self, t):
+        if self._last_push_time == 0.0:
+            return True
+        return (t - self._last_push_time) >= (1.0 / max(1.0, self.target_fps))
+
+    def append(self, frame_bgr, t):
+        try:
+            if not self._should_sample(t):
+                self._evict(t)
+                return
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+            ok, enc = cv2.imencode('.jpg', frame_bgr, encode_param)
+            if ok:
+                self.buf.append((t, enc))
+                self._last_push_time = t
+            self._evict(t)
+        except Exception:
+            pass
+
+    def _evict(self, now_t):
+        cutoff = now_t - self.keep_seconds
+        while self.buf and self.buf[0][0] < cutoff:
+            self.buf.popleft()
+
+    def slice_window(self, start_t, end_t):
+        frames = []
+        for (t, enc) in self.buf:
+            if start_t <= t <= end_t:
+                frames.append((t, enc))
+        return frames
+
+def save_incident_clip(frames_enc_list, out_path, frame_size, fps=10):
+    try:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        vw = cv2.VideoWriter(out_path, fourcc, float(fps), frame_size)
+        for (_, enc) in frames_enc_list:
+            img = cv2.imdecode(enc, cv2.IMREAD_COLOR)
+            if img is None:
+                continue
+            if (img.shape[1], img.shape[0]) != frame_size:
+                img = cv2.resize(img, frame_size)
+            vw.write(img)
+        vw.release()
+        return True
+    except Exception:
+        return False
+
+PRE_SECONDS = 30.0
+POST_SECONDS = 30.0
+BUFFER_FPS = 10
+JPEG_QUALITY = 80
+REPORT_DIR = 'reports'
+
+load_safe_zones()
 cap = cv2.VideoCapture('fall_final.mp4')
 
 with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
@@ -97,6 +275,16 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
     was_in_fall_when_ended = False
     paused_elapsed_end = 0.0
 
+    # rolling buffer for blackbox (-30s/+30s)
+    frame_buffer = FrameBuffer(keep_seconds=PRE_SECONDS + POST_SECONDS + 20, target_fps=10, jpeg_quality=80)
+
+    # incident state
+    incident_pending = False
+    incident_event_time = None
+    incident_saving = False
+    last_saved_time = None
+    incident_done = False
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -115,6 +303,11 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             keypoints = results.pose_landmarks.landmark
 
             fall_condition = is_fall_condition_met(keypoints)
+            # safe zone exclusion using person center
+            center = get_person_center_normalized(results)
+            if center is not None and EXCLUSION_ZONES:
+                if point_in_zones(center[0], center[1], EXCLUSION_ZONES):
+                    fall_condition = False
             current_time = time.time()
 
             # 디바운스 및 상태 확정/유지
@@ -152,6 +345,10 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                     if (current_time - fall_candidate_since) >= required_duration:
                         fall_state = True
                         fall_state_since = fall_candidate_since
+                        # new event: arm incident at timer 0s
+                        incident_pending = True
+                        incident_event_time = fall_state_since
+                        incident_done = False
                 else:
                     fall_candidate_since = None
 
@@ -232,6 +429,25 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
             paused_elapsed_end = 0.0
             flashing = False
             mask_visible = False
+
+        # draw zones (view-only)
+        if EXCLUSION_ZONES:
+            draw_zones(image, EXCLUSION_ZONES)
+
+        # push to buffer and handle incident saving
+        frame_buffer.append(image, current_time)
+        if incident_pending and (incident_event_time is not None) and ((current_time - incident_event_time) >= POST_SECONDS) and (not incident_saving):
+            incident_saving = True
+            start_t = incident_event_time - PRE_SECONDS
+            end_t = incident_event_time + POST_SECONDS
+            frames_window = frame_buffer.slice_window(start_t, end_t)
+            if frames_window:
+                ts_str = datetime.fromtimestamp(incident_event_time).strftime('%Y%m%d_%H%M%S')
+                out_path = os.path.join('reports', f'incident_{ts_str}.mp4')
+                ok = save_incident_clip(frames_window, out_path, (1000, 600), fps=10)
+            incident_pending = False
+            incident_saving = False
+            incident_done = True
 
         cv2.imshow('Fall Detection', image)
 
