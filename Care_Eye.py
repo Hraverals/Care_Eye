@@ -83,7 +83,7 @@ def is_fall_condition_met(keypoints):
 # Safe zone (load-only) + blackbox helpers
 # ============================
 
-EXCLUSION_ZONES = []  # rectangles [x1,y1,x2,y2] or polygons [[x,y], ...] in normalized coords on flipped image
+EXCLUSION_ZONES = []
 SAFE_ZONES_CONFIG = 'safe_zones.json'
 
 def load_safe_zones():
