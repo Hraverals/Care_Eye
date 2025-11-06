@@ -1,5 +1,7 @@
-# ONLY mediapipe (add second counter maintaning feature)
-# 현재 최종본
+# ONLY mediapipe 
+# 낙상 지속 시간(초) 카운터 기능 추가
+# 블랙박스 기능 추가 – 낙상 감지 시 영상 자동 녹화 및 저장
+# 안전 구역 기능 추가 – 소파나 침대 등 낙상으로 인식하지 않을 영역 Safe_Zone_Creator.py 로 설정 가능
 
 import cv2
 import mediapipe as mp
