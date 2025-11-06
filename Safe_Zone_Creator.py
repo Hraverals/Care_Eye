@@ -98,6 +98,7 @@ def on_mouse(event, x, y, flags, param):
         ui_poly_points.append((x, y))
 
 def main():
+    global ui_edit_mode, ui_poly_points
     load_safe_zones()
     cap = cv2.VideoCapture('fall_final.mp4')
 
@@ -159,4 +160,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
