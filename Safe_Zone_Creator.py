@@ -75,6 +75,7 @@ def main():
     global ui_edit_mode, ui_poly_points
     load_safe_zones()
     cap = cv2.VideoCapture('fall_final.mp4')
+    # cap = cv2.VideoCapture(0) # 실시간 캠 사용 시
 
     # render and align UI scale
     if True:

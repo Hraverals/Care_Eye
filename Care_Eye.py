@@ -254,6 +254,7 @@ REPORT_DIR = 'reports'  # 사고 영상 저장 폴더
 
 load_safe_zones()
 cap = cv2.VideoCapture('fall_final.mp4')
+# cap = cv2.VideoCapture(0) # 실시간 캠 사용 시
 
 with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
     # 지속 상태 추적 변수
