@@ -73,8 +73,8 @@ def is_fall_condition_met(keypoints):
         cos_tilt = np.clip(cos_tilt, -1.0, 1.0)
         tilt_deg = np.degrees(np.arccos(cos_tilt))
 
-        # 55도 이상이면 몸통이 수평에 가까움 -> 넘어짐으로 판정
-        return tilt_deg > 55.0
+        # 35도 이상이면 몸통이 낙상 상태로 의심됨 -> 5초 후 넘어짐으로 판정
+        return tilt_deg > 35.0
     except Exception:
         return False
 
@@ -253,7 +253,9 @@ JPEG_QUALITY = 80       # 버퍼 JPEG 품질 (용량/화질 절충)
 REPORT_DIR = 'reports'  # 사고 영상 저장 폴더
 
 load_safe_zones()
-cap = cv2.VideoCapture('fall_final.mp4')
+# cap = cv2.VideoCapture('fall.mp4')
+# cap = cv2.VideoCapture('fall_home.mp4')
+cap = cv2.VideoCapture('fall_home2.mp4')
 # cap = cv2.VideoCapture(0) # 실시간 캠 사용 시
 
 with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
@@ -261,7 +263,7 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
     fall_candidate_since = None   # 넘어짐 조건이 연속 유지되기 시작한 시각
     fall_state = False            # 넘어짐 상태 확정 여부
     fall_state_since = None       # 넘어짐 상태 확정 시각
-    required_duration = 0.2       # 짧은 디바운스(초)
+    required_duration = 5.0       # 짧은 디바운스(초)
     # 깜빡임(플래싱) 효과 변수
     flashing = False
     mask_visible = False
