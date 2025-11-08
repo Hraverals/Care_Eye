@@ -33,5 +33,6 @@ dist/
 build/
 
 reports
+safe_zones.json
 fall.mp4
 lying.mp4
