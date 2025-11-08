@@ -254,8 +254,8 @@ REPORT_DIR = 'reports'  # 사고 영상 저장 폴더
 
 load_safe_zones()
 # cap = cv2.VideoCapture('fall.mp4')
-# cap = cv2.VideoCapture('fall_home.mp4')
-cap = cv2.VideoCapture('fall_home2.mp4')
+# cap = cv2.VideoCapture('lying.mp4')
+cap = cv2.VideoCapture('fall_test.mp4')
 # cap = cv2.VideoCapture(0) # 실시간 캠 사용 시
 
 with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
@@ -408,9 +408,19 @@ with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as 
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2, cv2.LINE_AA
                 )
             else:
-                # 상태 해제 시 플래싱도 리셋
+                # Fall Suspected 단계 : 플래싱/마스크 끄고 노란색 안내 + 타이머
                 flashing = False
                 mask_visible = False
+                if fall_candidate_since is not None:
+                    sus_elapsed = max(0.0, current_time - fall_candidate_since)
+                    cv2.putText(
+                        image, 'Fall Suspected', (50, 70),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3, cv2.LINE_AA
+                    )
+                    cv2.putText(
+                        image, f"{sus_elapsed:0.1f}s", (50, 110),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2, cv2.LINE_AA
+                    )
 
             # 랜드마크 시각화
             mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
